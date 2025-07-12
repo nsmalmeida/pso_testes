@@ -41,11 +41,21 @@
 
 #include <minix/syslib.h>
 
-#define MAX_TICKETS 20
-static unsigned long int next = 1;
+#define MAX_TICKETS 20 // Numero maximo de tickets
+#define MAX_USER_PRIORITY_Q 14 // Última fila de prioridade de usuario
+#define MIN_USER_PRIORITY_Q 7  // Primeira fila de prioridade de usuario
+#define BASE_TICKETS_PER_PRIORITY 5 // Novo valor base de tickets
+#define PRIORITY_WEIGHT_FACTOR 2   // Fator de peso para a prioridade (ex: 1, 2, etc.)
+static unsigned int xorshift_state = 123456789; // Inicialize com um valor não zero
+
 int rando(void) {
-      next = next * 1103515245 + 12345;
-      return (unsigned int)(next/65536) % 32768;
+    // Xorshift32 - rápido e geralmente melhor que LCG simples para non-cryptographic use
+    unsigned int x = xorshift_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    xorshift_state = x;
+    return (int)(x % 32768); // Mantenha a faixa de retorno se necessário
 }
 
 /* Scheduling and message passing functions */
@@ -1810,13 +1820,12 @@ static struct proc * pick_proc(void)
   rdy_head = get_cpulocal_var(run_q_head);
 
   /* MODIFICADO: percorrer todos os processos, atribuindo os tickets e somando a variavel que acumula o total */
-  for (q=7; q <= 14; q++) { // Loop modificado para as filas de prioridade de usuário
+  for (q = MIN_USER_PRIORITY_Q; q <= MAX_USER_PRIORITY_Q; q++) {
     aux = rdy_head[q];
-    while(aux) { /* Percorrendo a fila de prioridade q */
-       /* Removendo do MAX_TICKETS, o valor da prioridade atual; dessa forma,
-        * quanto maior for a prioridade (menor valor), maior a quantidade de tickets
-        */
-        aux->p_tickets = MAX_TICKETS - q;
+    while(aux) {
+        // Combina um valor base com um peso baseado na prioridade.
+        // Quanto menor 'q' (maior prioridade), maior (MAX_USER_PRIORITY_Q - q + 1)
+        aux->p_tickets = BASE_TICKETS_PER_PRIORITY + ((MAX_USER_PRIORITY_Q - q + 1) * PRIORITY_WEIGHT_FACTOR);
         total_tickets += aux->p_tickets;
         aux = aux->p_nextready;
     }
@@ -1857,7 +1866,7 @@ static struct proc * pick_proc(void)
     }
   }
 
-  for (q=15; q <= 15; q++) { // Fila de baixa prioridade (15) ainda é verificada por último
+  for (q=15; q <= 15; q++) { // Fila de baixa prioridade (15) ainda e verificada por último
     if(!(rp = rdy_head[q])) {
         TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
         continue;
